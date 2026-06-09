@@ -1,17 +1,15 @@
 substitutions:
-  device_name: "ATI Ambiente Fan Controller"
-  device_name_low: "ati_ambient_fan_controller"
-  comment: "ATI Fan Controller"
+  name: ventola-raspberry # Do not use underscores, which are not fully compatible with mDNS
+  friendly_name: Ventola Raspberry
   version: "1.0.0"
-  speed_low: "10"
-  speed_med: "50"
+  speed_low: "35"
+  speed_medium: "50"
+  speed_high: "75"
   speed_full: "100"
 
 esphome:
-  name: "${device_name_low}"
-  comment: "${comment}"
-  platform: ESP8266
-  board: d1_mini
+  name: "${name}"
+  friendly_name: "${friendly_name}"
   project:
     name: "soloam.fan_controller"
     version: "${version}"
@@ -24,37 +22,44 @@ esphome:
       - delay: 5s
       - fan.turn_on:
           id: fan_speed
-          speed: "${speed_full}"
+          speed: "${speed_medium}"
 
+esp8266:
+  board: d1_mini
+
+# Enable logging
+logger:
+#  level: debug
+
+# Enable Home Assistant API
 api:
+  encryption:
+    key: "!ChangeMe!"
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  fast_connect: true
-  domain: .myhome
-  use_address: 192.168.7.200
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
   ap:
-    ssid: "${device_name}"
-    password: !secret wifi_ap_password
+    ssid: "${friendly_name} ESP"
+    password: !secret ap_password
 
 captive_portal:
 
 web_server:
   port: 80
 
-# Enable logging
-#debug:
-
-#logger:
-#  level: debug
-
-ota:
-
 mqtt:
   broker: !secret mqtt_broker
+  username: !secret mqtt_username
+  password: !secret mqtt_password
   discovery: false
-  topic_prefix: "esphome/${device_name_low}"
+  topic_prefix: "esphome/${name}"
 
 output:
   - platform: esp8266_pwm
@@ -67,20 +72,15 @@ fan:
     id: fan_speed
     output: pwm_output
     speed_count: 100
-    name: "${device_name} Fan"
-    command_topic: "esphome/${device_name_low}/fan/command"
-    state_topic: "esphome/${device_name_low}/fan/state"
-    on_turn_on:
-      then:
-        - switch.turn_on: power
-    on_turn_off:
-      then:
-        - switch.turn_off: power
+    name: "${friendly_name} Fan"
+    command_topic: "esphome/${name}/fan/command"
+    state_topic: "esphome/${name}/fan/state"
+
 number:
   - platform: template
     icon: "mdi:fan"
     id: speed_input
-    name: "${device_name} Fan Speed"
+    name: "${friendly_name} Fan Speed"
     lambda: |-
       return id(fan_speed).speed;
     step: 1
@@ -93,59 +93,32 @@ number:
         - fan.turn_on:
             id: fan_speed
             speed: !lambda "return x;"
-        - component.update: fanmode
+        - component.update: sensor_fanmode
         - component.update: sensor_fanspeed
 
-select:
+text_sensor:
   - platform: template
     icon: "mdi:fan"
-    name: "${device_name} Fan Mode"
-    id: fanmode
+    name: "${friendly_name} Fan Mode"
+    id: sensor_fanmode
     update_interval: 1s
     lambda: |-
-      if(id(fan_speed).speed <= ${speed_low})
-        return std::string("Low");
-      else if(id(fan_speed).speed == ${speed_med})
-        return std::string("Medium");
-      else if(id(fan_speed).speed >= ${speed_full})
-        return std::string("Full");
-      else
-        return std::string("Custom");
-    set_action:
-      then:
-        - lambda: |-
-            auto call = id(fan_speed).turn_on();
-
-            if(x == "Low")
-              call.set_speed(${speed_low});
-            else if(x == "Medium")
-              call.set_speed(${speed_med});
-            else if(x == "Full")
-              call.set_speed(${speed_full});
-            else
-              call.set_speed(id(speed_input).state);
-              
-            call.perform();
-        - component.update: speed_input
-        - component.update: sensor_fanspeed
-    options:
-      - Low
-      - Medium
-      - Full
-      - Custom
-
-switch:
-  - platform: gpio
-    name: "${device_name} Power"
-    pin: D1
-    id: power
-    restore_mode: RESTORE_DEFAULT_ON
-    internal: true
+      if (id(fan_speed).speed <= ${speed_low}) {
+        return {"Low"};
+      } else if (id(fan_speed).speed <= ${speed_medium}) {
+        return {"Medium"};
+      } else if (id(fan_speed).speed <= ${speed_high}) {
+        return {"High"};
+      } else if (id(fan_speed).speed <= ${speed_full}) {
+        return {"Full"};
+      } else {
+        return {"Custom"};
+      }
 
 button:
   - platform: template
     icon: "mdi:fan-speed-1"
-    name: "${device_name} Set Low Speed"
+    name: "${friendly_name} Set Low Speed"
     id: fanlow
     on_press:
       - fan.turn_on:
@@ -153,26 +126,33 @@ button:
           speed: "${speed_low}"
   - platform: template
     icon: "mdi:fan-speed-2"
-    name: "${device_name} Set Medium Speed"
+    name: "${friendly_name} Set Medium Speed"
     on_press:
       - fan.turn_on:
           id: fan_speed
-          speed: "${speed_med}"
+          speed: "${speed_medium}"
   - platform: template
     icon: "mdi:fan-speed-3"
-    name: "${device_name} Set Full Speed"
+    name: "${friendly_name} Set High Speed"
+    on_press:
+      - fan.turn_on:
+          id: fan_speed
+          speed: "${speed_high}"
+  - platform: template
+    icon: "mdi:fan-alert"
+    name: "${friendly_name} Set Full Speed"
     on_press:
       - fan.turn_on:
           id: fan_speed
           speed: "${speed_full}"
   - platform: restart
-    name: "${device_name} Restart"
+    name: "${friendly_name} Restart"
 
 sensor:
   - platform: template
     id: sensor_fanspeed
     icon: "mdi:fan"
-    name: "${device_name} Fan Seed"
+    name: "${friendly_name} Fan Speed"
     lambda: |-
       return id(fan_speed).speed;
     update_interval: 1s
@@ -181,21 +161,27 @@ sensor:
   - platform: dht
     pin: D2
     temperature:
-      name: "${device_name} Temperature"
+      name: "${friendly_name} Temperature"
     humidity:
-      name: "${device_name} Humidity"
+      name: "${friendly_name} Humidity"
     update_interval: 30s
     model: DHT22
   - platform: pulse_counter
     icon: "mdi:fan"
     pin:
       number: D3
-    name: "${device_name} RPM"
+      # Abilitiamo la resistenza di pullup interna per stabilizzare il segnale
+      mode: INPUT_PULLUP
+    name: "${friendly_name} RPM"
     unit_of_measurement: rpm
     accuracy_decimals: 0
-    filters:
-      - multiply: 0.5
+    update_interval: 3s  # <--- Aumentato per stabilizzare il calcolo matematico
     count_mode:
       rising_edge: DISABLE
       falling_edge: INCREMENT
-    update_interval: 1s
+    filters:
+      # 1. Riconosce come impulsi validi solo quelli distanti almeno 15 millisecondi
+      #    (adatto a ventole fino a oltre 4000 RPM)
+      - debounce: 15ms  
+      # 2. Moltiplica per 0.5 (perché le ventole PC inviano 2 impulsi a rotazione)
+      - multiply: 0.5
